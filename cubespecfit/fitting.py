@@ -4,9 +4,6 @@ from matplotlib import pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.optimize import curve_fit
 
-color_norm_sn = matplotlib.colors.Normalize(vmin=5, vmax=65)
-cmap = matplotlib.cm.plasma
-
 # ------------------------------------------------------------------------------------------------------------
 
 def fitspec(wave, flux, err, model, p0, bounds):
@@ -31,7 +28,7 @@ def fitspec(wave, flux, err, model, p0, bounds):
 # ------------------------------------------------------------------------------------------------------------
 
 def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, snr_cut=5,
-           bin_lower=0, bin_upper=0, save_grid=False, grid_file="fit_grid.pdf"):
+           bin_lower=0, bin_upper=0, snr_max=50, save_grid=False, grid_file="fit_grid.pdf"):
     """
     derive maps of velocity/velocity dispersion/line flux/continuum flux by fitting a given emission line
     model on a pixel-by-pixel basis, using adaptive binning
@@ -48,10 +45,15 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
     :param snr_cut: signal-to-noise threshold for the adaptive binning
     :param bin_lower: minimum bin size to use in adaptive binning
     :param bin_upper: maximum bin size to use in adaptive binning
+    :param snr_max: approx. highest expected S/N, will set color scale for grid spectra plots
     :param save_grid: whether or not to save a PDF of the resultant grid spectra
     :param grid_file: filename to save grid spectra
     :return: best fit parameter and error cubes
     """
+
+    color_norm_sn = matplotlib.colors.Normalize(vmin=snr_cut, vmax=snr_max)
+    cmap = matplotlib.cm.plasma             # generate color map for plotting
+
     l = l0*(1+z_sys)                        # observed wavelength of the main emission line
     gd = (wl >= l - dl) & (wl <= l + dl)    # extract a small region around the wavelength of the line...
     cube = cube[gd, :, :]                   #   ...from the cube...
@@ -86,6 +88,7 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
 
                 flux = np.nanmean(cube[:, ylo:yhi, xlo:xhi], axis=(1,2))        # extract flux
                 err = np.nanmean(err_cube[:, ylo:yhi, xlo:xhi], axis=(1, 2))    # extract errors
+
                 if np.isnan(flux).all():
                     continue
 
