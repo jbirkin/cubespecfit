@@ -57,3 +57,22 @@ def oiii_model(x, z, I_OIIIr, sig, c, R=2000):
     return model
 
 # ------------------------------------------------------------------------------------------------------------
+
+def oiii_hbeta_model(x, z, I_OIIIr, sig, OIII_Hb, c, R=2000):
+    # emission line wavelengths
+    Hb, OIIIb, OIIIr = np.array([0.4862683, 0.4958911, 0.5006843]) * (1 + z)
+    I_OIIIb = I_OIIIr / 2.98            # get OIII4959 flux from OIII5007 flux and line ratio
+    I_Hb = (I_OIIIr+I_OIIIb) / OIII_Hb
+
+    sig_inst = OIIIr / R / 2.35                         # calculate instrumental sigma from R
+    sig_obs = (sig ** 2 + sig_inst ** 2) ** 0.5         # convert to observed sigma
+
+    # combine the two Gaussians plus constant continuum
+    f1 = I_OIIIb / ((2 * np.pi) ** 0.5 * sig_obs) * np.exp(-0.5 * (x - OIIIb) ** 2 / sig_obs ** 2)
+    f2 = I_OIIIr / ((2 * np.pi) ** 0.5 * sig_obs) * np.exp(-0.5 * (x - OIIIr) ** 2 / sig_obs ** 2)
+    f3 = I_Hb / ((2 * np.pi) ** 0.5 * sig_obs) * np.exp(-0.5 * (x - Hb) ** 2 / sig_obs ** 2)
+    model = c + f1 + f2 + f3
+
+    return model
+
+# ------------------------------------------------------------------------------------------------------------

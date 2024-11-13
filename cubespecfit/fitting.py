@@ -3,6 +3,7 @@ import matplotlib
 from matplotlib import pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.optimize import curve_fit
+import tqdm
 
 # ------------------------------------------------------------------------------------------------------------
 
@@ -64,7 +65,7 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
     sz = cube.shape
 
     if save_grid:                                       # if the user wishes to save a plot of the results
-        plt.figure(figsize=(sz[2],sz[1]))               # then initialize the figure and gridspec
+        plt.figure(figsize=(sz[2]*2,sz[1]*2))               # then initialize the figure and gridspec
         gs = gridspec.GridSpec(sz[1],sz[2])
 
     param_cube = np.zeros((len(p0), sz[1], sz[2]))      # zero arrays to store results...
@@ -75,7 +76,8 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
 
     # now begin the fitting
     # loop over pixels and fit 1d spectra
-    for p in range(0, sz[2]):
+    print("Fitting...")
+    for p in tqdm.tqdm(range(0, sz[2])):
         for q in range(0, sz[1]):
             for binsize in range(bin_lower, bin_upper + 1):
                 xlo, xhi = p + np.array([-binsize, binsize+1])      # get spatial indices of pixels to use in the
@@ -120,14 +122,14 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
                     if SNR >= snr_cut:  # check if pixel meets S/N threshold
                         if save_grid:
                             ax = plt.subplot(gs[sz[1] - 1 - q, p])
-                            ax.set_xlim([l - dl, l + dl])
+                            ax.set_xlim([l - dl/2, l + dl/2])
                             ax.set_ylim([-0.2, 1.5])
                             X = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 1000)
                             ax.set_xticks([])
                             ax.set_yticks([])
 
-                            ax.step(wave_m, flux_m, lw=1, where="mid", c="w")
-                            ax.plot(X, model(X, *params), c="k", lw=1, alpha=0.8)
+                            ax.step(wave_m, flux_m, lw=2.5, where="mid", c="w", zorder=3)
+                            ax.plot(X, model(X, *params), c="k", lw=2, alpha=1, zorder=3.5)
 
                             ax.fill_between((ax.get_xlim()[0], ax.get_xlim()[1]),
                                             ax.get_ylim()[0], ax.get_ylim()[1],
@@ -140,7 +142,7 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
                         param_cube[0:len(p0), q, p] = params[0:len(p0)]
                         param_err_cube[0:len(p0), q, p] = errors[0:len(p0)]
                         snr_map[q, p] = SNR
-                        bin_map[q, p] = binsize
+                        bin_map[q, p] = binsize+1
 
                         break
 
@@ -153,6 +155,10 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
                 except:
                     raise
 
+    print("Done.")
+
+    bin_map[bin_map==0] = np.nan
+    snr_map[snr_map==0] = np.nan
 
     if save_grid:
         gs.update(hspace=0, wspace=0)
