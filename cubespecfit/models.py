@@ -18,6 +18,23 @@ def ha_nii_model(x, z, I_Ha, sig, NIIHa, c, R=2000):
 
     return model
 
+def ha_nii_broad_model(x, z, I_Ha, sig, NIIHa, c, I_Ha_broad, sig_broad, R=2000, broad_nii=False):
+    model_narrow = ha_nii_model(x, z, I_Ha, sig, NIIHa, c, R)
+    Ha, NIIb, NIIr = np.array([0.656461, 0.654985, 0.658528]) * (1 + z)
+    sig_inst = Ha / R / 2.35
+    sig_obs_broad = (sig_broad ** 2 + sig_inst ** 2) ** 0.5
+    I_NII_broad = I_Ha_broad * NIIHa
+
+    if broad_nii:
+        f1_broad = I_Ha_broad / (np.sqrt(2*np.pi)*sig_obs_broad) * np.exp(-0.5 * (x - Ha) ** 2 / sig_obs_broad ** 2)
+        f2_broad = I_NII_broad / (np.sqrt(2*np.pi)*sig_obs_broad) * np.exp(-0.5 * (x - NIIr) ** 2 / sig_obs_broad ** 2)
+        f3_broad = I_NII_broad / 2.8 / (np.sqrt(2*np.pi)*sig_obs_broad) * np.exp(-0.5 * (x - NIIb) ** 2 / sig_obs_broad ** 2)
+        f_broad = f1_broad + f2_broad + f3_broad
+    else:
+        f_broad = I_Ha_broad / (np.sqrt(2*np.pi)*sig_obs_broad) * np.exp(-0.5 * (x - Ha)**2 / sig_obs_broad**2)
+
+    return model_narrow + f_broad
+
 # ------------------------------------------------------------------------------------------------------------
 
 def ha_nii_sii_model(x, z, I_Ha, sig, NIIHa, I_SIIr, SII_ratio, c, R=2000):
