@@ -92,4 +92,19 @@ def oiii_hbeta_model(x, z, I_OIIIr, sig, OIII_Hb, c, R=2000):
 
     return model
 
+def oiii_hbeta_broad_model(x, z, I_OIIIr, sig, OIII_Hb, I_OIIIr_broad, sig_broad, c, R=2000):
+    model_narrow = oiii_hbeta_model(x, z, I_OIIIr, sig, OIII_Hb, c, R)
+    # emission line wavelengths
+    Hb, OIIIb, OIIIr = np.array([0.4862721, 0.4960295, 0.5008239]) * (1 + z)
+    I_OIIIb_broad = I_OIIIr_broad / 2.98
+    I_Hb_broad = (I_OIIIr_broad + I_OIIIb_broad) / OIII_Hb
+
+    sig_inst = OIIIr / R / 2.35 
+    sig_obs_broad = (sig_broad ** 2 + sig_inst ** 2) ** 0.5
+
+    f_OIII_broad = I_OIIIr_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x - OIIIr) ** 2 /
+                sig_obs_broad** 2) + I_OIIIb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x -OIIIb) ** 2)+ I_Hb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x - Hb) ** 2)
+
+    return model_narrow + f_OIII_broad
+
 # ------------------------------------------------------------------------------------------------------------
