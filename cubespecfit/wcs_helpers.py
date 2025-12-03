@@ -41,7 +41,7 @@ def _propagate_celestial_wcs(dst_hdr, ref_hdr):
 
 
 def _save_results(save_to, meta, param_cube, param_err_cube, snr_map, bin_map, norm_map,
-                  broad_map, bic_map, wave, ref_header=None):
+                  broad_map, bic_map, wave, binned_cube, binned_err_cube, ref_header=None):
     """
     Save results to .npz or .fits
     If ref_header is provided, its 2D celestial WCS is copied into all 2D image maps.
@@ -70,6 +70,8 @@ def _save_results(save_to, meta, param_cube, param_err_cube, snr_map, bin_map, n
 
         # 3D cubes (params/errors) are (nparam, y, x)
         hdus += [
+            _img("BINNED_CUBE", binned_cube, ref_hdr=ref_header),
+            _img("BINNED_ERR_CUBE", binned_err_cube, ref_hdr=ref_header),
             _img("PARAM_CUBE", param_cube, ref_hdr=ref_header),
             _img("PARAM_ERR", param_err_cube, ref_hdr=ref_header),
             _img("SNR_MAP",   snr_map,   ref_hdr=ref_header),

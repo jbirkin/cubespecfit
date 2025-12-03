@@ -216,6 +216,8 @@ def fitcube_two_model(
         gs = gridspec.GridSpec(sz[1], sz[2])
         plt.title(grid_file.split("/")[-1], color="w")
 
+    binned_cube = np.zeros((sz[0], sz[1], sz[2]))
+    binned_err_cube = np.zeros((sz[0], sz[1], sz[2]))
     param_cube = np.zeros((len(p0_b), sz[1], sz[2]))
     param_err_cube = np.zeros((len(p0_b), sz[1], sz[2]))
     snr_map = np.zeros([sz[1], sz[2]])
@@ -322,6 +324,8 @@ def fitcube_two_model(
                                 param_cube[len(p0_n)+1, q, p] = np.nan
                                 param_err_cube[len(p0_n)+1, q, p] = np.nan
 
+                        binned_cube[:, q, p] = flux
+                        binned_err_cube[:, q, p] = err
                         snr_map[q, p]   = SNR
                         bin_map[q, p]   = binsize + 1
                         broad_map[q, p] = int(is_broad) + 1
@@ -342,6 +346,8 @@ def fitcube_two_model(
 
     logging.info("Fitting complete.")
 
+    binned_cube[binned_cube == 0]         = np.nan
+    binned_err_cube[binned_err_cube == 0] = np.nan
     param_cube[param_cube == 0]         = np.nan
     param_err_cube[param_err_cube == 0] = np.nan
     bin_map[bin_map == 0]               = np.nan
@@ -367,7 +373,10 @@ def fitcube_two_model(
             "snr_max": snr_max,
             "grid_file": grid_file,
         }
-        _save_results(save_to, meta, param_cube, param_err_cube, snr_map, bin_map, norm_map, broad_map, bic_map, wave,
-                      ref_header=ref_header)
+        _save_results(save_to, meta=meta, param_cube=param_cube,
+                      param_err_cube=param_err_cube, snr_map=snr_map,
+                      bin_map=bin_map, norm_map=norm_map, broad_map=broad_map,
+                      bic_map=bic_map, wave=wave, binned_cube=binned_cube,
+                      binned_err_cube=binned_err_cube, ref_header=ref_header)
 
     return param_cube, param_err_cube, snr_map, bin_map, norm_map, broad_map, bic_map
