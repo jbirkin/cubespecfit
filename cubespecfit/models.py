@@ -56,6 +56,20 @@ def ha_nii_sii_model(x, z, I_Ha, sig, NIIHa, I_SIIr, SII_ratio, c, R=2000):
 
     return model
 
+def sii_model(x, z, I_SIIb, sig, SII_ratio, c, R=2000):
+    # emission line wavelengths
+    SIIb, SIIr = np.array([0.671829, 0.673267]) * (1 + z)
+    I_SIIr = I_SIIb * SII_ratio         # get blue [SII] flux from red [SII] flux and [SII] ratio
+
+    sig_inst = SIIr / R / 2.35                            # calculate instrumental sigma from R
+    sig_obs = (sig ** 2 + sig_inst ** 2) ** 0.5         # convert to observed sigma
+
+    f1 = I_SIIb / ((2 * np.pi) ** 0.5 * sig_obs) * np.exp(-0.5 * (x - SIIb) ** 2 / sig_obs ** 2)
+    f2 = I_SIIr / ((2 * np.pi) ** 0.5 * sig_obs) * np.exp(-0.5 * (x - SIIr) ** 2 / sig_obs ** 2)
+    model = c + f1 + f2
+
+    return model
+
 # ------------------------------------------------------------------------------------------------------------
 
 def oiii_model(x, z, I_OIIIr, sig, c, R=2000):
@@ -72,6 +86,20 @@ def oiii_model(x, z, I_OIIIr, sig, c, R=2000):
     model = c + f1 + f2
 
     return model
+
+def oiii_broad_model(x, z, I_OIIIr, sig, I_OIIIr_broad, sig_broad, c, R=2000):
+    model_narrow = oiii_model(x, z, I_OIIIr, sig, c, R)
+    # emission line wavelengths
+    OIIIb, OIIIr = np.array([0.4960295, 0.5008239]) * (1 + z)
+    I_OIIIb_broad = I_OIIIr_broad / 2.98            # get OIII4959 flux from OIII5007 flux and line ratio
+
+    sig_inst = OIIIr / R / 2.35                         # calculate instrumental sigma from R
+    sig_obs_broad = (sig_broad ** 2 + sig_inst ** 2) ** 0.5
+
+    f_OIII_broad = I_OIIIr_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x - OIIIr) ** 2 /
+                sig_obs_broad** 2) + I_OIIIb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x -
+                                                                                                           OIIIb) ** 2)
+    return model_narrow + f_OIII_broad
 
 # ------------------------------------------------------------------------------------------------------------
 
@@ -99,12 +127,24 @@ def oiii_hbeta_broad_model(x, z, I_OIIIr, sig, OIII_Hb, I_OIIIr_broad, sig_broad
     I_OIIIb_broad = I_OIIIr_broad / 2.98
     I_Hb_broad = (I_OIIIr_broad + I_OIIIb_broad) / OIII_Hb
 
-    sig_inst = OIIIr / R / 2.35 
+    sig_inst = OIIIr / R / 2.35
     sig_obs_broad = (sig_broad ** 2 + sig_inst ** 2) ** 0.5
 
     f_OIII_broad = I_OIIIr_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x - OIIIr) ** 2 /
                 sig_obs_broad** 2) + I_OIIIb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x -OIIIb) ** 2)+ I_Hb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x - Hb) ** 2)
 
     return model_narrow + f_OIII_broad
+
+def hbeta_model(x, z, I_Hb, sig, c, R=2000):
+    # emission line wavelengths
+    Hb = np.array([0.4862721]) * (1 + z)
+
+    sig_inst = Hb / R / 2.35                         # calculate instrumental sigma from R
+    sig_obs = (sig ** 2 + sig_inst ** 2) ** 0.5         # convert to observed sigma
+
+    model = c + I_Hb / ((2 * np.pi) ** 0.5 * sig_obs) * np.exp(-0.5 * (x - Hb) ** 2 / sig_obs ** 2)
+
+    return model
+    return model
 
 # ------------------------------------------------------------------------------------------------------------
