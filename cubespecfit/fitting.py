@@ -2,11 +2,16 @@ import numpy as np
 import matplotlib
 from matplotlib import pyplot as plt
 import matplotlib.gridspec as gridspec
-from scipy.optimize import curve_fit
+from lmfit import Model, Parameters
 import tqdm
 import logging
+import warnings
 
 from cubespecfit.wcs_helpers import _save_results
+
+# Suppress specific numpy warnings globally
+warnings.filterwarnings('ignore', message='Mean of empty slice')
+warnings.filterwarnings('ignore', message='Degrees of freedom <= 0 for slice')
 
 # ------------------------------------------------------------------------------------------------------------
 
@@ -14,29 +19,76 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(levelname)s: %(message)s",
     filename="fitcube.log",  # Save to file
-    filemode="w"             # Overwrite each run (use 'a' to append)
+    filemode="w"  # Overwrite each run (use 'a' to append)
 )
-def fitspec(wave, flux, err, model, p0, bounds):
-    """
-    fit 1-D spectrum with a given model using scipy.curve_fit
-    :param wave: wavelength array of input spectrum
-    :param flux: flux array of input spectrum
-    :param err: error array of input spectrum
-    :param model: model to fit to the data
-    :param p0: initial guess for model parameters
-    :param bounds: bounds for model parameters
-    :return:
-    """
-    if bounds:
-        params, cov = curve_fit(model, wave, flux, p0=p0, sigma=err, bounds=bounds) # do the fitting
-    else:
-        params, cov = curve_fit(model, wave, flux, p0=p0, sigma=err)
-    errors = np.array([cov[n][n] ** 0.5 for n in range(len(params))])               # estimate uncertainties from
-                                                                                    #    covariance matrix
-    bestfit = model(wave, *params)                                                  # get best fit array
-    chi2 = np.sum((flux-bestfit)**2/err**2)                                         # get chi-squared
 
-    return params, errors, bestfit, chi2
+
+def fitspec_lmfit(wave, flux, err, model, params_dict, constraints=None):
+    """
+    Fit 1-D spectrum with a given model using lmfit
+
+    Parameters
+    ----------
+    wave : array
+        Wavelength array of input spectrum
+    flux : array
+        Flux array of input spectrum
+    err : array
+        Error array of input spectrum
+    model : function
+        Model function to fit. Should take (x, param1, param2, ...) as arguments
+    params_dict : dict
+        Dictionary of parameter settings. Each key is a parameter name, and value is a dict with:
+        - 'value': initial guess (required)
+        - 'min': lower bound (optional)
+        - 'max': upper bound (optional)
+        - 'vary': whether to vary this parameter (optional, default True)
+        - 'expr': expression to constrain parameter (optional)
+    constraints : dict, optional
+        Dictionary of constraint callbacks to apply AFTER fitting.
+        Format: {'param_name': callback_function}
+        Each callback receives params object and modifies constrained parameters
+
+    Returns
+    -------
+    params : array
+        Best-fit parameter values (only free/constrained parameters)
+    errors : array
+        1-sigma uncertainties on parameters
+    bestfit : array
+        Best-fit model evaluated at input wavelengths
+    chi2 : float
+        Chi-squared of the fit
+    result : lmfit.ModelResult
+        Full lmfit result object (contains much more info)
+    """
+    # Create lmfit Model
+    lm_model = Model(model)
+
+    # Set up Parameters object
+    params = Parameters()
+
+    # Add parameters from params_dict
+    for param_name, param_info in params_dict.items():
+        params.add(param_name, **param_info)
+
+    # Standard unconstrained fit
+    result = lm_model.fit(flux, params, x=wave, weights=1.0 / err)
+
+    # Extract results
+    # Filter for only varying (non-fixed) parameters
+    varying_params = [p for p in params_dict.keys() if not result.params[p].vary == False]
+
+    param_values = np.array([result.params[p].value for p in varying_params])
+    param_errors = np.array([result.params[p].stderr if result.params[p].stderr is not None
+                             else np.nan for p in varying_params])
+
+    bestfit = result.best_fit
+    chi2 = result.chisqr
+    result_obj = result
+
+    return param_values, param_errors, bestfit, chi2, result_obj
+
 
 def bic(flux, err, model, params):
     """
@@ -48,10 +100,11 @@ def bic(flux, err, model, params):
     chi2 = np.sum((residual / err) ** 2)
     return k * np.log(n) + chi2
 
+
 # ------------------------------------------------------------------------------------------------------------
 
-def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, snr_cut=5,
-           bin_lower=0, bin_upper=0, snr_max=50, save_grid=False, grid_file="fit_grid.pdf"):
+def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_line, dl=0.05, snr_cut=5,
+            bin_lower=0, bin_upper=0, snr_max=50, save_grid=False, grid_file="fit_grid.pdf"):
     """
     derive maps of velocity/velocity dispersion/line flux/continuum flux by fitting a given emission line
     model on a pixel-by-pixel basis, using adaptive binning
@@ -60,8 +113,8 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
     :param wl: wavelength axis of the corresponding data cube
     :param z_sys: systemic redshift of the source in the cube
     :param model: model to fit to the data
-    :param p0: initial guess for model parameters
-    :param bounds: bounds for model parameters
+    :param params_dict: dictionary of parameter settings for lmfit
+    :param constraints: dictionary of parameter constraints/expressions
     :param l0: central wavelength of emission line(s)
     :param no_line: indices of the wavelength array to use for continuum estimation
     :param dl: wavelength range to cut around the line, in um
@@ -75,26 +128,27 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
     """
 
     color_norm_sn = matplotlib.colors.Normalize(vmin=snr_cut, vmax=snr_max)
-    cmap = matplotlib.cm.plasma             # generate color map for plotting
+    cmap = matplotlib.cm.plasma  # generate color map for plotting
 
-    l = l0*(1+z_sys)                        # observed wavelength of the main emission line
-    gd = (wl >= l - dl) & (wl <= l + dl)    # extract a small region around the wavelength of the line...
-    cube = cube[gd, :, :]                   #   ...from the cube...
-    err_cube = err_cube[gd, :, :]           #   ...the error cube...
-    wave = wl[gd]                           #   ...the wavelength array...
-    no_line = no_line[gd]                   #   ...and the no_line array
+    l = l0 * (1 + z_sys)  # observed wavelength of the main emission line
+    gd = (wl >= l - dl) & (wl <= l + dl)  # extract a small region around the wavelength of the line...
+    cube = cube[gd, :, :]  # ...from the cube...
+    err_cube = err_cube[gd, :, :]  # ...the error cube...
+    wave = wl[gd]  # ...the wavelength array...
+    no_line = no_line[gd]  # ...and the no_line array
 
     sz = cube.shape
 
-    if save_grid:                                       # if the user wishes to save a plot of the results
-        plt.figure(figsize=(sz[2]*2,sz[1]*2))               # then initialize the figure and gridspec
-        gs = gridspec.GridSpec(sz[1],sz[2])
+    if save_grid:  # if the user wishes to save a plot of the results
+        plt.figure(figsize=(sz[2] * 2, sz[1] * 2))  # then initialize the figure and gridspec
+        gs = gridspec.GridSpec(sz[1], sz[2])
 
-    param_cube = np.zeros((len(p0), sz[1], sz[2]))      # zero arrays to store results...
-    param_err_cube = np.zeros((len(p0), sz[1], sz[2]))  #   ...uncertainties...
-    snr_map = np.zeros([sz[1], sz[2]])                  #   ...the S/N map...
-    bin_map = np.zeros([sz[1], sz[2]])                  #   ... the binsize map
-    norm_map = np.zeros([sz[1], sz[2]])                  #   ... and the flux normalization map
+    n_params = len(params_dict)
+    param_cube = np.zeros((n_params, sz[1], sz[2]))  # zero arrays to store results...
+    param_err_cube = np.zeros((n_params, sz[1], sz[2]))  # ...uncertainties...
+    snr_map = np.zeros([sz[1], sz[2]])  # ...the S/N map...
+    bin_map = np.zeros([sz[1], sz[2]])  # ... the binsize map
+    norm_map = np.zeros([sz[1], sz[2]])  # ... and the flux normalization map
 
     # now begin the fitting
     # loop over pixels and fit 1d spectra
@@ -102,18 +156,21 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
     for p in tqdm.tqdm(range(0, sz[2])):
         for q in range(0, sz[1]):
             for binsize in range(bin_lower, bin_upper + 1):
-                xlo, xhi = p + np.array([-binsize, binsize+1])      # get spatial indices of pixels to use in the
-                ylo, yhi = q + np.array([-binsize, binsize+1])      # fitting, binning if desired
+                xlo, xhi = p + np.array([-binsize, binsize + 1])  # get spatial indices of pixels to use in the
+                ylo, yhi = q + np.array([-binsize, binsize + 1])  # fitting, binning if desired
 
                 xlo = 0 if xlo <= 0 else xlo
-                xhi = sz[2] if xhi > sz[2] else xhi     # set xlo/xhi to 0/Nx if pixel near boundaries
+                xhi = sz[2] if xhi > sz[2] else xhi  # set xlo/xhi to 0/Nx if pixel near boundaries
                 ylo = 0 if ylo <= 0 else ylo
-                yhi = sz[1] if yhi >= sz[1] else yhi    # do the same for ylo/yhi
+                yhi = sz[1] if yhi >= sz[1] else yhi  # do the same for ylo/yhi
 
-                flux = np.nanmean(cube[:, ylo:yhi, xlo:xhi], axis=(1,2))        # extract flux
-                err = np.nanmean(err_cube[:, ylo:yhi, xlo:xhi], axis=(1, 2))    # extract errors
+                # Extract flux and error with proper NaN handling
+                with np.errstate(invalid='ignore'):  # Suppress warnings for all-NaN slices
+                    flux = np.nanmean(cube[:, ylo:yhi, xlo:xhi], axis=(1, 2))
+                    err = np.nanmean(err_cube[:, ylo:yhi, xlo:xhi], axis=(1, 2))
 
-                if np.isnan(flux).all():
+                # Skip if flux is all NaN or invalid
+                if np.isnan(flux).all() or not np.isfinite(flux).any():
                     continue
 
                 # mask NaNs in all arrays
@@ -126,25 +183,25 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
                 err_m = err_m[np.isnan(flux) == False]
                 no_line_m = no_line_m[np.isnan(flux) == False]
 
-                norm = np.nanmax(flux_m)      # get max value of flux array
-                flux_m/=norm                  # normalise flux and error to avoid very small values
-                err_m/=norm
+                norm = np.nanmax(flux_m)  # get max value of flux array
+                flux_m /= norm  # normalise flux and error to avoid very small values
+                err_m /= norm
                 norm_map[q, p] = norm
 
                 # first, calculate chi2 without including emission  (*_c = "continuum")
                 med_c, std_c = np.nanmedian(flux_m[no_line_m]), np.nanstd(flux_m[no_line_m])
-                chi2_SLF = np.sum((flux_m-med_c)**2/err_m**2)
+                chi2_SLF = np.sum((flux_m - med_c) ** 2 / err_m ** 2)
 
                 # now try to fit the emission lines
                 try:
-                    params, errors, bestfit, chi2_GF = fitspec(wave_m, flux_m, err_m, model, p0=p0,
-                                                               bounds=bounds)
+                    params, errors, bestfit, chi2_GF, result = fitspec_lmfit(wave_m, flux_m, err_m, model,
+                                                                             params_dict, constraints)
                     SNR = (chi2_SLF - chi2_GF) ** 0.5
 
                     if SNR >= snr_cut:  # check if pixel meets S/N threshold
                         if save_grid:
                             ax = plt.subplot(gs[sz[1] - 1 - q, p])
-                            ax.set_xlim([l - dl/2, l + dl/2])
+                            ax.set_xlim([l - dl / 2, l + dl / 2])
                             ax.set_ylim([-0.2, 1.5])
                             X = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 1000)
                             ax.set_xticks([])
@@ -156,15 +213,15 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
                             ax.fill_between((ax.get_xlim()[0], ax.get_xlim()[1]),
                                             ax.get_ylim()[0], ax.get_ylim()[1],
                                             color=cmap(color_norm_sn(SNR)), zorder=1)
-                            ax.fill_between(wave, ax.get_ylim()[0], ax.get_ylim()[1], where=no_line==False,
+                            ax.fill_between(wave, ax.get_ylim()[0], ax.get_ylim()[1], where=no_line == False,
                                             color="w", alpha=0.2)
                             ax.axvline(l0 * (1 + z_sys), c="k", ls="--", lw=1, alpha=0.75, zorder=2)
 
                         # store the results
-                        param_cube[0:len(p0), q, p] = params[0:len(p0)]
-                        param_err_cube[0:len(p0), q, p] = errors[0:len(p0)]
+                        param_cube[0:n_params, q, p] = params[0:n_params]
+                        param_err_cube[0:n_params, q, p] = errors[0:n_params]
                         snr_map[q, p] = SNR
-                        bin_map[q, p] = binsize+1
+                        bin_map[q, p] = binsize + 1
 
                         break
 
@@ -179,8 +236,8 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
 
     print("Done.")
 
-    bin_map[bin_map==0] = np.nan
-    snr_map[snr_map==0] = np.nan
+    bin_map[bin_map == 0] = np.nan
+    snr_map[snr_map == 0] = np.nan
 
     if save_grid:
         gs.update(hspace=0, wspace=0)
@@ -190,15 +247,16 @@ def fitcube(cube, err_cube, wl, z_sys, model, p0, bounds, l0, no_line, dl=0.05, 
 
     return param_cube, param_err_cube, snr_map, bin_map, norm_map
 
+
 # ------------------------------------------------------------------------------------------------------------
 
 def fitcube_two_model(
-    cube, err_cube, wl, z_sys, model_narrow, model_broad,
-    p0_n, p0_b, bounds_n, bounds_b, l0, no_line,
-    dl=0.05, snr_cut=5, bin_lower=0, bin_upper=0, snr_max=50,
-    save_grid=False, grid_file="fit_grid_two_models.pdf",
-    save_to=None, ref_header=None, detailed_plot=True, bic_threshold=10,
-    use_rms=False
+        cube, err_cube, wl, z_sys, model_narrow, model_broad,
+        params_dict_n, params_dict_b, constraints_n, constraints_b, l0, no_line,
+        dl=0.05, snr_cut=5, bin_lower=0, bin_upper=0, snr_max=50,
+        save_grid=False, grid_file="fit_grid_two_models.pdf",
+        save_to=None, ref_header=None, detailed_plot=True, bic_threshold=10,
+        use_rms=False
 ):
     color_norm_sn = matplotlib.colors.Normalize(vmin=snr_cut, vmax=snr_max)
     cmap = matplotlib.cm.plasma
@@ -218,8 +276,9 @@ def fitcube_two_model(
 
     binned_cube = np.zeros((sz[0], sz[1], sz[2]))
     binned_err_cube = np.zeros((sz[0], sz[1], sz[2]))
-    param_cube = np.zeros((len(p0_b), sz[1], sz[2]))
-    param_err_cube = np.zeros((len(p0_b), sz[1], sz[2]))
+    n_params = len(params_dict_b)  # Use broad model params as it has more parameters
+    param_cube = np.zeros((n_params, sz[1], sz[2]))
+    param_err_cube = np.zeros((n_params, sz[1], sz[2]))
     snr_map = np.zeros([sz[1], sz[2]])
     bin_map = np.zeros([sz[1], sz[2]])
     norm_map = np.zeros([sz[1], sz[2]])
@@ -237,12 +296,22 @@ def fitcube_two_model(
                 ylo = 0 if ylo <= 0 else ylo
                 yhi = sz[1] if yhi >= sz[1] else yhi
 
-                flux = np.nanmean(cube[:, ylo:yhi, xlo:xhi], axis=(1, 2))
-                err = np.nanmean(err_cube[:, ylo:yhi, xlo:xhi], axis=(1, 2))
-                if use_rms:
-                    err = np.nanstd(flux[no_line])*np.ones(len(flux))
-                if np.isnan(flux).all():
+                # Extract flux and error with proper NaN handling
+                with np.errstate(invalid='ignore'):  # Suppress warnings for all-NaN slices
+                    flux = np.nanmean(cube[:, ylo:yhi, xlo:xhi], axis=(1, 2))
+                    err = np.nanmean(err_cube[:, ylo:yhi, xlo:xhi], axis=(1, 2))
+
+                # Skip if flux is all NaN or invalid
+                if np.isnan(flux).all() or not np.isfinite(flux).any():
                     continue
+
+                if use_rms:
+                    with np.errstate(invalid='ignore'):  # Suppress warnings for nanstd
+                        rms = np.nanstd(flux[no_line])
+                        if np.isfinite(rms) and rms > 0:
+                            err = rms * np.ones(len(flux))
+                        else:
+                            continue  # Skip if RMS calculation fails
 
                 mask = ~np.isnan(flux)
                 wave_m = wave[mask]
@@ -252,17 +321,21 @@ def fitcube_two_model(
 
                 norm = np.nanmax(flux_m)
                 flux_m /= norm
-                err_m  /= norm
+                err_m /= norm
                 norm_map[q, p] = norm
 
                 med_c, std_c = np.nanmedian(flux_m[no_line_m]), np.nanstd(flux_m[no_line_m])
                 chi2_SLF = np.sum((flux_m - med_c) ** 2 / err_m ** 2)
 
                 try:
-                    params_n, errors_n, bestfit_n, chi2_n = fitspec(wave_m, flux_m, err_m, model_narrow, p0_n, bounds_n)
+                    params_n, errors_n, bestfit_n, chi2_n, result_n = fitspec_lmfit(
+                        wave_m, flux_m, err_m, model_narrow, params_dict_n, constraints_n
+                    )
                     bic_n = bic(flux_m, err_m, lambda p: model_narrow(wave_m, *p), params_n)
 
-                    params_b, errors_b, bestfit_b, chi2_b = fitspec(wave_m, flux_m, err_m, model_broad, p0_b, bounds_b)
+                    params_b, errors_b, bestfit_b, chi2_b, result_b = fitspec_lmfit(
+                        wave_m, flux_m, err_m, model_broad, params_dict_b, constraints_b
+                    )
                     bic_b = bic(flux_m, err_m, lambda p: model_broad(wave_m, *p), params_b)
 
                     delta_bic = bic_n - bic_b
@@ -281,7 +354,8 @@ def fitcube_two_model(
                             ax.set_xlim([l - dl / 2, l + dl / 2])
                             ax.set_ylim([-0.2, 1.5])
                             X = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1], 1000)
-                            ax.set_xticks([]); ax.set_yticks([])
+                            ax.set_xticks([])
+                            ax.set_yticks([])
 
                             # Plot the data and error
                             ax.step(wave_m, flux_m, lw=1.5, where="mid", c="w", zorder=3)
@@ -315,19 +389,23 @@ def fitcube_two_model(
                                 ax.text(0.98, 0.82, fr'$\Delta$BIC = {delta_bic:.1f}', va="top", ha="right",
                                         transform=ax.transAxes, c="w", fontsize=8)
 
-                            if delta_bic > bic_threshold:
-                                param_cube[0:len(p0_b), q, p] = params[0:len(p0_b)]
-                                param_err_cube[0:len(p0_b), q, p] = errors[0:len(p0_b)]
-                            else:
-                                param_cube[0:len(p0_n), q, p] = params[0:len(p0_n)]
-                                param_err_cube[0:len(p0_n), q, p] = errors[0:len(p0_n)]
-                                param_cube[len(p0_n)+1, q, p] = np.nan
-                                param_err_cube[len(p0_n)+1, q, p] = np.nan
+                        # Store results
+                        if delta_bic > bic_threshold:
+                            param_cube[0:len(params_b), q, p] = params_b[0:len(params_b)]
+                            param_err_cube[0:len(params_b), q, p] = errors_b[0:len(params_b)]
+                        else:
+                            n_params_n = len(params_n)
+                            param_cube[0:n_params_n, q, p] = params_n[0:n_params_n]
+                            param_err_cube[0:n_params_n, q, p] = errors_n[0:n_params_n]
+                            # Set remaining params to NaN if narrow model has fewer params
+                            if n_params_n < n_params:
+                                param_cube[n_params_n:, q, p] = np.nan
+                                param_err_cube[n_params_n:, q, p] = np.nan
 
                         binned_cube[:, q, p] = flux
                         binned_err_cube[:, q, p] = err
-                        snr_map[q, p]   = SNR
-                        bin_map[q, p]   = binsize + 1
+                        snr_map[q, p] = SNR
+                        bin_map[q, p] = binsize + 1
                         broad_map[q, p] = int(is_broad) + 1
                         bic_map[q, p] = delta_bic
                         break
@@ -346,14 +424,14 @@ def fitcube_two_model(
 
     logging.info("Fitting complete.")
 
-    binned_cube[binned_cube == 0]         = np.nan
+    binned_cube[binned_cube == 0] = np.nan
     binned_err_cube[binned_err_cube == 0] = np.nan
-    param_cube[param_cube == 0]         = np.nan
+    param_cube[param_cube == 0] = np.nan
     param_err_cube[param_err_cube == 0] = np.nan
-    bin_map[bin_map == 0]               = np.nan
-    snr_map[snr_map == 0]               = np.nan
-    broad_map[broad_map == 0]           = np.nan
-    bic_map[bic_map == 0]               = np.nan
+    bin_map[bin_map == 0] = np.nan
+    snr_map[snr_map == 0] = np.nan
+    broad_map[broad_map == 0] = np.nan
+    bic_map[bic_map == 0] = np.nan
 
     if save_grid:
         gs.update(hspace=0, wspace=0)
@@ -379,4 +457,4 @@ def fitcube_two_model(
                       bic_map=bic_map, wave=wave, binned_cube=binned_cube,
                       binned_err_cube=binned_err_cube, ref_header=ref_header)
 
-    return param_cube, param_err_cube, snr_map, bin_map, norm_map, broad_map, bic_map
+    # return param_cube, param_err_cube, snr_map, bin_map, norm_map, broad_map, bic_map
