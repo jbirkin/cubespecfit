@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib
 from matplotlib import pyplot as plt
 import matplotlib.gridspec as gridspec
-from lmfit import Model, Parameters
+from lmfit import Model, Parameters, minimize
 import tqdm
 import logging
 import warnings
@@ -45,22 +45,31 @@ def fitspec_lmfit(wave, flux, err, model, params_dict, constraints=None):
         - 'vary': whether to vary this parameter (optional, default True)
         - 'expr': expression to constrain parameter (optional)
     constraints : dict, optional
-        Dictionary of constraint callbacks to apply AFTER fitting.
-        Format: {'param_name': callback_function}
-        Each callback receives params object and modifies constrained parameters
+        Dictionary defining inequality constraints via penalty method.
+        Format: {
+            'type': 'inequality',
+            'rules': [
+                (param1, relation, param2, factor),
+                ...
+            ]
+        }
+        Where relation is '>=' or '<='
+        Example: ('I_Ha', '>=', 'I_Ha_broad', 2.0) means I_Ha >= 2.0*I_Ha_broad
+
+        If None, performs standard unconstrained fit.
 
     Returns
     -------
     params : array
-        Best-fit parameter values (only free/constrained parameters)
+        Best-fit parameter values (only varying parameters, excludes fixed)
     errors : array
         1-sigma uncertainties on parameters
     bestfit : array
         Best-fit model evaluated at input wavelengths
     chi2 : float
         Chi-squared of the fit
-    result : lmfit.ModelResult
-        Full lmfit result object (contains much more info)
+    result : lmfit.ModelResult or MinimizeResult
+        Full lmfit result object
     """
     # Create lmfit Model
     lm_model = Model(model)
@@ -72,20 +81,67 @@ def fitspec_lmfit(wave, flux, err, model, params_dict, constraints=None):
     for param_name, param_info in params_dict.items():
         params.add(param_name, **param_info)
 
-    # Standard unconstrained fit
-    result = lm_model.fit(flux, params, x=wave, weights=1.0 / err)
+    # Check if we need constrained fitting
+    if constraints is not None and constraints.get('type') == 'inequality':
+        # Define residual function with penalty for constraint violations
+        def constrained_residual(params, x, data, weights):
+            # Calculate model
+            param_vals = [params[p].value for p in params_dict.keys()]
+            model_vals = model(x, *param_vals)
 
-    # Extract results
-    # Filter for only varying (non-fixed) parameters
-    varying_params = [p for p in params_dict.keys() if not result.params[p].vary == False]
+            # Calculate basic residuals
+            residuals = (data - model_vals) * weights
 
-    param_values = np.array([result.params[p].value for p in varying_params])
-    param_errors = np.array([result.params[p].stderr if result.params[p].stderr is not None
-                             else np.nan for p in varying_params])
+            # Add penalty for constraint violations
+            penalty = 0.0
+            for rule in constraints['rules']:
+                param1_name, relation, param2_name, factor = rule
+                param1_val = params[param1_name].value
+                param2_val = params[param2_name].value
 
-    bestfit = result.best_fit
-    chi2 = result.chisqr
-    result_obj = result
+                if relation == '>=':
+                    # param1 >= factor * param2
+                    if param1_val < factor * param2_val:
+                        violation = factor * param2_val - param1_val
+                        penalty += 1e6 * violation ** 2
+
+                elif relation == '<=':
+                    # param1 <= factor * param2
+                    if param1_val > factor * param2_val:
+                        violation = param1_val - factor * param2_val
+                        penalty += 1e6 * violation ** 2
+
+            return np.append(residuals, penalty)
+
+        # Perform fit with penalty method
+        result = minimize(constrained_residual, params, args=(wave, flux, 1.0 / err), method='leastsq')
+
+        # Reconstruct model result
+        param_vals = [result.params[p].value for p in params_dict.keys()]
+        bestfit = model(wave, *param_vals)
+        chi2 = np.sum((flux - bestfit) ** 2 / err ** 2)
+
+        # Extract results - only varying parameters
+        varying_params = [p for p in params_dict.keys() if result.params[p].vary]
+        param_values = np.array([result.params[p].value for p in varying_params])
+        param_errors = np.array([result.params[p].stderr if result.params[p].stderr is not None
+                                 else np.nan for p in varying_params])
+
+        result_obj = result
+
+    else:
+        # Standard unconstrained fit
+        result = lm_model.fit(flux, params, x=wave, weights=1.0 / err)
+
+        # Extract results - only varying parameters
+        varying_params = [p for p in params_dict.keys() if result.params[p].vary]
+        param_values = np.array([result.params[p].value for p in varying_params])
+        param_errors = np.array([result.params[p].stderr if result.params[p].stderr is not None
+                                 else np.nan for p in varying_params])
+
+        bestfit = result.best_fit
+        chi2 = result.chisqr
+        result_obj = result
 
     return param_values, param_errors, bestfit, chi2, result_obj
 
