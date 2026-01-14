@@ -1,3 +1,5 @@
+__all__ = ['fitspec_lmfit','bic','fitcube','fitcube_two_model']
+
 import numpy as np
 import matplotlib
 from matplotlib import pyplot as plt
@@ -7,7 +9,7 @@ import tqdm
 import logging
 import warnings
 
-from cubespecfit.wcs_helpers import _save_results
+from .wcs_helpers import _save_results
 
 # Suppress specific numpy warnings globally
 warnings.filterwarnings('ignore', message='Mean of empty slice')
