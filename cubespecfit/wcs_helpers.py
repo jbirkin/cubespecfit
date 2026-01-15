@@ -1,3 +1,5 @@
+__all__ = ['_propagate_celestial_wcs','_save_results']
+
 import os
 import numpy as np
 from astropy.io import fits
