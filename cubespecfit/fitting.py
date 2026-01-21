@@ -121,7 +121,6 @@ def fitspec_lmfit(wave, flux, err, model, params_dict, constraints=None):
         # Reconstruct model result
         param_vals = [result.params[p].value for p in params_dict.keys()]
         bestfit = model(wave, *param_vals)
-        chi2 = np.sum((flux - bestfit) ** 2 / err ** 2)
 
         # Extract results - only varying parameters
         varying_params = [p for p in params_dict.keys() if result.params[p].vary]
@@ -129,7 +128,6 @@ def fitspec_lmfit(wave, flux, err, model, params_dict, constraints=None):
         param_errors = np.array([result.params[p].stderr if result.params[p].stderr is not None
                                  else np.nan for p in varying_params])
 
-        result_obj = result
 
     else:
         # Standard unconstrained fit
@@ -142,8 +140,11 @@ def fitspec_lmfit(wave, flux, err, model, params_dict, constraints=None):
                                  else np.nan for p in varying_params])
 
         bestfit = result.best_fit
-        chi2 = result.chisqr
-        result_obj = result
+
+    # NOTE lmfit doesn't appear to return what we think of as the "standard" chisquared
+    #chi2 = result.chisqr
+    chi2 = np.sum((flux - bestfit) ** 2 / err ** 2)
+    result_obj = result
 
     return param_values, param_errors, bestfit, chi2, result_obj
 
