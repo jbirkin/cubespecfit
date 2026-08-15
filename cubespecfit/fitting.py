@@ -1,5 +1,7 @@
 __all__ = ['fitspec_lmfit','bic','fitcube','fitcube_two_model']
 
+import inspect
+
 import numpy as np
 import matplotlib
 from matplotlib import pyplot as plt
@@ -82,6 +84,19 @@ def fitspec_lmfit(wave, flux, err, model, params_dict, constraints=None):
     # Add parameters from params_dict
     for param_name, param_info in params_dict.items():
         params.add(param_name, **param_info)
+
+    # lmfit requires an initial value for EVERY argument of the model function, including
+    # ones the caller thinks of as instrument settings rather than free parameters (e.g.
+    # `R`, the spectral resolution, in the models shipped with this package). Any model
+    # argument that has a default and was not supplied by the caller is added here as a
+    # fixed parameter, so callers only need to specify the quantities they actually want
+    # fitted. Without this, `Model.fit` raises "Missing parameters: ['R']".
+    sig = inspect.signature(model)
+    for name, prm in sig.parameters.items():
+        if name in params or name == "x":
+            continue
+        if prm.default is not inspect.Parameter.empty:
+            params.add(name, value=prm.default, vary=False)
 
     # Check if we need constrained fitting
     if constraints is not None and constraints.get('type') == 'inequality':
@@ -201,7 +216,10 @@ def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_l
         plt.figure(figsize=(sz[2] * 2, sz[1] * 2))  # then initialize the figure and gridspec
         gs = gridspec.GridSpec(sz[1], sz[2])
 
-    n_params = len(params_dict)
+    # Count only the VARYING parameters: fitspec_lmfit returns values for those alone,
+    # so sizing the cube with len(params_dict) would leave a slot for every fixed
+    # parameter and make the assignment below fail with a broadcast error.
+    n_params = sum(1 for v in params_dict.values() if v.get('vary', True))
     param_cube = np.zeros((n_params, sz[1], sz[2]))  # zero arrays to store results...
     param_err_cube = np.zeros((n_params, sz[1], sz[2]))  # ...uncertainties...
     snr_map = np.zeros([sz[1], sz[2]])  # ...the S/N map...
@@ -231,15 +249,15 @@ def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_l
                 if np.isnan(flux).all() or not np.isfinite(flux).any():
                     continue
 
-                # mask NaNs in all arrays
-                wave_m = wave.copy()
-                flux_m = flux.copy()
-                err_m = err.copy()
-                no_line_m = no_line.copy()
-                wave_m = wave_m[np.isnan(flux) == False]
-                flux_m = flux_m[np.isnan(flux) == False]
-                err_m = err_m[np.isnan(flux) == False]
-                no_line_m = no_line_m[np.isnan(flux) == False]
+                # Mask non-finite values in BOTH flux and err. A finite flux paired with a
+                # NaN or zero error still breaks the 1/err weighting inside lmfit.
+                good = np.isfinite(flux) & np.isfinite(err) & (err > 0)
+                if good.sum() < 10:
+                    continue
+                wave_m = wave[good]
+                flux_m = flux[good]
+                err_m = err[good]
+                no_line_m = no_line[good]
 
                 norm = np.nanmax(flux_m)  # get max value of flux array
                 flux_m /= norm  # normalise flux and error to avoid very small values
@@ -284,12 +302,14 @@ def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_l
                         break
 
                 except ValueError as e:
+                    # A pixel whose data cannot support a fit is expected; anything else
+                    # is a bug and must surface rather than silently zeroing the map.
                     if str(e) == "Residuals are not finite in the initial point.":
                         continue
+                    raise
                 except RuntimeError as e:
                     if str(e) == "Optimal parameters not found: The maximum number of function evaluations is exceeded.":
                         continue
-                except:
                     raise
 
     print("Done.")
@@ -515,4 +535,4 @@ def fitcube_two_model(
                       bic_map=bic_map, wave=wave, binned_cube=binned_cube,
                       binned_err_cube=binned_err_cube, ref_header=ref_header)
 
-    # return param_cube, param_err_cube, snr_map, bin_map, norm_map, broad_map, bic_map
+    return param_cube, param_err_cube, snr_map, bin_map, norm_map, broad_map, bic_map

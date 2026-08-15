@@ -99,9 +99,12 @@ def oiii_broad_model(x, z, I_OIIIr, sig, I_OIIIr_broad, sig_broad, c, R=2000):
     sig_inst = OIIIr / R / 2.35                         # calculate instrumental sigma from R
     sig_obs_broad = (sig_broad ** 2 + sig_inst ** 2) ** 0.5
 
-    f_OIII_broad = I_OIIIr_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x - OIIIr) ** 2 /
-                sig_obs_broad** 2) + I_OIIIb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x -
-                                                                                                           OIIIb) ** 2)
+    f_OIII_broad = (
+        I_OIIIr_broad / (np.sqrt(2 * np.pi) * sig_obs_broad)
+        * np.exp(-0.5 * (x - OIIIr) ** 2 / sig_obs_broad ** 2)
+        + I_OIIIb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad)
+        * np.exp(-0.5 * (x - OIIIb) ** 2 / sig_obs_broad ** 2)
+    )
     return model_narrow + f_OIII_broad
 
 # ------------------------------------------------------------------------------------------------------------
@@ -133,8 +136,14 @@ def oiii_hbeta_broad_model(x, z, I_OIIIr, sig, OIII_Hb, I_OIIIr_broad, sig_broad
     sig_inst = OIIIr / R / 2.35
     sig_obs_broad = (sig_broad ** 2 + sig_inst ** 2) ** 0.5
 
-    f_OIII_broad = I_OIIIr_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x - OIIIr) ** 2 /
-                sig_obs_broad** 2) + I_OIIIb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x -OIIIb) ** 2)+ I_Hb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad) * np.exp(-0.5 * (x - Hb) ** 2)
+    f_OIII_broad = (
+        I_OIIIr_broad / (np.sqrt(2 * np.pi) * sig_obs_broad)
+        * np.exp(-0.5 * (x - OIIIr) ** 2 / sig_obs_broad ** 2)
+        + I_OIIIb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad)
+        * np.exp(-0.5 * (x - OIIIb) ** 2 / sig_obs_broad ** 2)
+        + I_Hb_broad / (np.sqrt(2 * np.pi) * sig_obs_broad)
+        * np.exp(-0.5 * (x - Hb) ** 2 / sig_obs_broad ** 2)
+    )
 
     return model_narrow + f_OIII_broad
 
@@ -147,7 +156,6 @@ def hbeta_model(x, z, I_Hb, sig, c, R=2000):
 
     model = c + I_Hb / ((2 * np.pi) ** 0.5 * sig_obs) * np.exp(-0.5 * (x - Hb) ** 2 / sig_obs ** 2)
 
-    return model
     return model
 
 # ------------------------------------------------------------------------------------------------------------
