@@ -4,10 +4,29 @@ __all__ = ['ha_nii_model','ha_nii_broad_model','ha_nii_sii_model','sii_model','o
 import numpy as np
 
 # ------------------------------------------------------------------------------------------------------------
+# Rest wavelengths, microns, VACUUM throughout.
+#
+# These live in one place because the narrow and broad variants of the [OIII] models
+# previously disagreed: the narrow models used air values (4958.911/5006.843 A) while the
+# broad ones used vacuum (4960.295/5008.239 A). In a combined narrow+broad fit that put
+# the broad component ~84 km/s away from the narrow one, so the fit absorbed a velocity
+# offset that is not in the data. Referencing shared constants makes that class of drift
+# impossible.
+
+HA     = 0.656461    # H-alpha
+NII_B  = 0.654985    # [NII] 6548
+NII_R  = 0.658528    # [NII] 6584
+SII_B  = 0.671829    # [SII] 6716
+SII_R  = 0.673267    # [SII] 6731
+HB     = 0.4862683   # H-beta
+OIII_B = 0.4960295   # [OIII] 4959
+OIII_R = 0.5008239   # [OIII] 5007
+
+# ------------------------------------------------------------------------------------------------------------
 
 def ha_nii_model(x, z, I_Ha, sig, NIIHa, c, R=2000):
     # emission line wavelengths
-    Ha, NIIb, NIIr = np.array([0.656461, 0.654985, 0.658528]) * (1 + z)
+    Ha, NIIb, NIIr = np.array([HA, NII_B, NII_R]) * (1 + z)
     I_NII = I_Ha * NIIHa                                              # get NII flux from Ha flux and [NII]/Ha ratio
 
     sig_inst = Ha / R / 2.35                            # calculate instrumental sigma from R
@@ -23,7 +42,7 @@ def ha_nii_model(x, z, I_Ha, sig, NIIHa, c, R=2000):
 
 def ha_nii_broad_model(x, z, I_Ha, sig, NIIHa, c, I_Ha_broad, sig_broad, R=2000, broad_nii=False):
     model_narrow = ha_nii_model(x, z, I_Ha, sig, NIIHa, c, R)
-    Ha, NIIb, NIIr = np.array([0.656461, 0.654985, 0.658528]) * (1 + z)
+    Ha, NIIb, NIIr = np.array([HA, NII_B, NII_R]) * (1 + z)
     sig_inst = Ha / R / 2.35
     sig_obs_broad = (sig_broad ** 2 + sig_inst ** 2) ** 0.5
     I_NII_broad = I_Ha_broad * NIIHa
@@ -42,7 +61,7 @@ def ha_nii_broad_model(x, z, I_Ha, sig, NIIHa, c, I_Ha_broad, sig_broad, R=2000,
 
 def ha_nii_sii_model(x, z, I_Ha, sig, NIIHa, I_SIIr, SII_ratio, c, R=2000):
     # emission line wavelengths
-    Ha, NIIb, NIIr, SIIb, SIIr = np.array([0.656461, 0.654985, 0.658528, 0.671829, 0.673267]) * (1 + z)
+    Ha, NIIb, NIIr, SIIb, SIIr = np.array([HA, NII_B, NII_R, SII_B, SII_R]) * (1 + z)
     I_NII = I_Ha * NIIHa                # get NII flux from Ha flux and [NII]/Ha ratio
     I_SIIb = I_SIIr * SII_ratio         # get blue [SII] flux from red [SII] flux and [SII] ratio
 
@@ -61,7 +80,7 @@ def ha_nii_sii_model(x, z, I_Ha, sig, NIIHa, I_SIIr, SII_ratio, c, R=2000):
 
 def sii_model(x, z, I_SIIb, sig, SII_ratio, c, R=2000):
     # emission line wavelengths
-    SIIb, SIIr = np.array([0.671829, 0.673267]) * (1 + z)
+    SIIb, SIIr = np.array([SII_B, SII_R]) * (1 + z)
     I_SIIr = I_SIIb * SII_ratio         # get blue [SII] flux from red [SII] flux and [SII] ratio
 
     sig_inst = SIIr / R / 2.35                            # calculate instrumental sigma from R
@@ -77,7 +96,7 @@ def sii_model(x, z, I_SIIb, sig, SII_ratio, c, R=2000):
 
 def oiii_model(x, z, I_OIIIr, sig, c, R=2000):
     # emission line wavelengths
-    OIIIb, OIIIr = np.array([0.4958911, 0.5006843]) * (1 + z)
+    OIIIb, OIIIr = np.array([OIII_B, OIII_R]) * (1 + z)
     I_OIIIb = I_OIIIr / 2.98            # get OIII4959 flux from OIII5007 flux and line ratio
 
     sig_inst = OIIIr / R / 2.35                         # calculate instrumental sigma from R
@@ -93,7 +112,7 @@ def oiii_model(x, z, I_OIIIr, sig, c, R=2000):
 def oiii_broad_model(x, z, I_OIIIr, sig, I_OIIIr_broad, sig_broad, c, R=2000):
     model_narrow = oiii_model(x, z, I_OIIIr, sig, c, R)
     # emission line wavelengths
-    OIIIb, OIIIr = np.array([0.4960295, 0.5008239]) * (1 + z)
+    OIIIb, OIIIr = np.array([OIII_B, OIII_R]) * (1 + z)
     I_OIIIb_broad = I_OIIIr_broad / 2.98            # get OIII4959 flux from OIII5007 flux and line ratio
 
     sig_inst = OIIIr / R / 2.35                         # calculate instrumental sigma from R
@@ -111,7 +130,7 @@ def oiii_broad_model(x, z, I_OIIIr, sig, I_OIIIr_broad, sig_broad, c, R=2000):
 
 def oiii_hbeta_model(x, z, I_OIIIr, sig, OIII_Hb, c, R=2000):
     # emission line wavelengths
-    Hb, OIIIb, OIIIr = np.array([0.4862683, 0.4958911, 0.5006843]) * (1 + z)
+    Hb, OIIIb, OIIIr = np.array([HB, OIII_B, OIII_R]) * (1 + z)
     I_OIIIb = I_OIIIr / 2.98            # get OIII4959 flux from OIII5007 flux and line ratio
     I_Hb = (I_OIIIr+I_OIIIb) / OIII_Hb
 
@@ -129,7 +148,7 @@ def oiii_hbeta_model(x, z, I_OIIIr, sig, OIII_Hb, c, R=2000):
 def oiii_hbeta_broad_model(x, z, I_OIIIr, sig, OIII_Hb, I_OIIIr_broad, sig_broad, c, R=2000):
     model_narrow = oiii_hbeta_model(x, z, I_OIIIr, sig, OIII_Hb, c, R)
     # emission line wavelengths
-    Hb, OIIIb, OIIIr = np.array([0.4862721, 0.4960295, 0.5008239]) * (1 + z)
+    Hb, OIIIb, OIIIr = np.array([HB, OIII_B, OIII_R]) * (1 + z)
     I_OIIIb_broad = I_OIIIr_broad / 2.98
     I_Hb_broad = (I_OIIIr_broad + I_OIIIb_broad) / OIII_Hb
 
@@ -149,7 +168,7 @@ def oiii_hbeta_broad_model(x, z, I_OIIIr, sig, OIII_Hb, I_OIIIr_broad, sig_broad
 
 def hbeta_model(x, z, I_Hb, sig, c, R=2000):
     # emission line wavelengths
-    Hb = np.array([0.4862721]) * (1 + z)
+    Hb = HB * (1 + z)
 
     sig_inst = Hb / R / 2.35                         # calculate instrumental sigma from R
     sig_obs = (sig ** 2 + sig_inst ** 2) ** 0.5         # convert to observed sigma

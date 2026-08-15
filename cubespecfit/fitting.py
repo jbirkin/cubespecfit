@@ -1,4 +1,4 @@
-__all__ = ['fitspec_lmfit','bic','fitcube','fitcube_two_model']
+__all__ = ['fitspec_lmfit','bic','fitcube','fitcube_two_model','railed_parameters']
 
 import inspect
 
@@ -163,6 +163,51 @@ def fitspec_lmfit(wave, flux, err, model, params_dict, constraints=None):
     return param_values, param_errors, bestfit, chi2, result_obj
 
 
+
+def railed_parameters(params, params_dict, rtol=1e-3):
+    """Which fitted parameters are sitting on a bound.
+
+    A parameter pinned to its min or max has not converged — the optimiser wanted to go
+    further and the bound stopped it. Such a pixel looks like data on a map but is really
+    an artefact of the prior, so it needs to be visible rather than silently plotted.
+
+    Parameters
+    ----------
+    params : array
+        Best-fit values for the varying parameters, in params_dict order.
+    params_dict : dict
+        The dictionary passed to the fit.
+    rtol : float
+        Relative tolerance for "on the bound", scaled by the bound's magnitude.
+
+    Returns
+    -------
+    int
+        Bitmask; bit i is set when the i-th varying parameter is on a bound. 0 means all
+        parameters are interior. Use `bin(mask)` or `mask & (1 << i)` to inspect.
+    """
+    varying = [(n, v) for n, v in params_dict.items() if v.get('vary', True)]
+    mask = 0
+    for i, (name, info) in enumerate(varying):
+        if i >= len(params):
+            break
+        val = params[i]
+        lo, hi = info.get('min'), info.get('max')
+        # Tolerance scales with the WIDTH of the allowed range, not the magnitude of the
+        # bound. Redshift is the case that makes this matter: z ~ 3.76 with a range of
+        # +/-0.008, so a tolerance proportional to 3.76 would flag almost everything.
+        if lo is not None and hi is not None and np.isfinite(lo) and np.isfinite(hi):
+            scale = max(hi - lo, 1e-30)
+        else:
+            scale = max(abs(lo if lo is not None else hi or 0.0), 1e-30)
+        for bound in (lo, hi):
+            if bound is None or not np.isfinite(bound):
+                continue
+            if abs(val - bound) <= rtol * scale:
+                mask |= (1 << i)
+    return mask
+
+
 def bic(flux, err, model, params):
     """
     Compute Bayesian Information Criterion.
@@ -177,7 +222,8 @@ def bic(flux, err, model, params):
 # ------------------------------------------------------------------------------------------------------------
 
 def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_line, dl=0.05, snr_cut=5,
-            bin_lower=0, bin_upper=0, snr_max=50, save_grid=False, grid_file="fit_grid.pdf"):
+            bin_lower=0, bin_upper=0, snr_max=50, save_grid=False, grid_file="fit_grid.pdf",
+            return_railed=False):
     """
     derive maps of velocity/velocity dispersion/line flux/continuum flux by fitting a given emission line
     model on a pixel-by-pixel basis, using adaptive binning
@@ -197,7 +243,10 @@ def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_l
     :param snr_max: approx. highest expected S/N, will set color scale for grid spectra plots
     :param save_grid: whether or not to save a PDF of the resultant grid spectra
     :param grid_file: filename to save grid spectra
-    :return: best fit parameter and error cubes
+    :param return_railed: if True, append a `railed_map` to the returned tuple. Each entry
+        is a bitmask of which varying parameters are pinned to a bound at that pixel
+        (0 = all interior). Pinned parameters have not converged; see `railed_parameters`.
+    :return: best fit parameter and error cubes (plus `railed_map` if `return_railed`)
     """
 
     color_norm_sn = matplotlib.colors.Normalize(vmin=snr_cut, vmax=snr_max)
@@ -223,6 +272,7 @@ def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_l
     param_cube = np.zeros((n_params, sz[1], sz[2]))  # zero arrays to store results...
     param_err_cube = np.zeros((n_params, sz[1], sz[2]))  # ...uncertainties...
     snr_map = np.zeros([sz[1], sz[2]])  # ...the S/N map...
+    railed_map = np.zeros([sz[1], sz[2]], dtype=int)  # ...which params hit a bound...
     bin_map = np.zeros([sz[1], sz[2]])  # ... the binsize map
     norm_map = np.zeros([sz[1], sz[2]])  # ... and the flux normalization map
 
@@ -298,6 +348,7 @@ def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_l
                         param_err_cube[0:n_params, q, p] = errors[0:n_params]
                         snr_map[q, p] = SNR
                         bin_map[q, p] = binsize + 1
+                        railed_map[q, p] = railed_parameters(params, params_dict)
 
                         break
 
@@ -323,6 +374,8 @@ def fitcube(cube, err_cube, wl, z_sys, model, params_dict, constraints, l0, no_l
         plt.savefig(grid_file)
         plt.close()
 
+    if return_railed:
+        return param_cube, param_err_cube, snr_map, bin_map, norm_map, railed_map
     return param_cube, param_err_cube, snr_map, bin_map, norm_map
 
 
