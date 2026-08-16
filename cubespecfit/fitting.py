@@ -178,7 +178,11 @@ def railed_parameters(params, params_dict, rtol=1e-3):
     params_dict : dict
         The dictionary passed to the fit.
     rtol : float
-        Relative tolerance for "on the bound", scaled by the bound's magnitude.
+        Tolerance for "on the bound", relative to the WIDTH of that parameter's allowed
+        range (max - min), not to the magnitude of the bound itself. Redshift is the case
+        that forces this: z ~ 3.76 with a range of only +/-0.008, so scaling by 3.76 would
+        flag nearly every pixel. Where only one bound is finite there is no width to scale
+        by, and the magnitude of that bound is used instead.
 
     Returns
     -------
